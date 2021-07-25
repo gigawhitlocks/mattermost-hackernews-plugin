@@ -1,14 +1,12 @@
 {
-    "id": "business.silly.wikipedia",
-    "name": "Wikipedia",
-    "description": "Automatically pulls the first paragraph from Wikipedia when a link is posted",
-    "version": "0.1.0",
-    "min_server_version": "5.12.0",
+    "id": "com.gigawhitlocks.hackernews",
+    "name": "Hacker News",
+    "description": "Extended description for Hacker News links",
+    "version": "0.2.0",
+    "min_server_version": "5.20.0",
     "server": {
         "executables": {
-            "linux-amd64": "server/dist/plugin-linux-amd64",
-            "darwin-amd64": "server/dist/plugin-darwin-amd64",
-            "windows-amd64": "server/dist/plugin-windows-amd64.exe"
+            "linux-amd64": "server/dist/plugin-linux-amd64"
         }
     },
     "settings_schema": {

@@ -15,17 +15,8 @@ import (
 	"github.com/mattermost/mattermost-server/v5/plugin"
 )
 
-// this regexp matches links to Wikipedia pages with or without scheme
-var wikiURLPattern = regexp.MustCompile(`((http|https):\/\/)?[^\s]+\.wikipedia\.org[^\s]*`)
-
-// this regexp captures the page name and anchor
-// the title is \0 and the anchor is \1
-var wikiPagePattern = regexp.MustCompile(`wiki\/[^\s\#]+(\#[^\s]+)?`)
-
-// // matches the pattern of wikilinks from inside of the body text after
-// // they have been converted to Markdown by pandoc
-// var wikilinkPattern = regexp.MustCompile(`\[[\w\s]+\]\((\w+) "wikilink"\)`)
-var wikilinkPattern = regexp.MustCompile(`(\w+) "wikilink"`)
+// this regexp matches links to Hacker News pages with or without scheme
+var hnURLPattern = regexp.MustCompile(`((http|https):\/\/)?news\.ycombinator\.com\/item\?id=[0-9]+`)
 
 // Plugin implements the interface expected by the Mattermost server to communicate between the server and plugin processes.
 type Plugin struct {
@@ -42,108 +33,107 @@ type Plugin struct {
 	profileImage []byte
 }
 
-// types for unmarshaling data from wikipedia
-type WikiResponse struct {
-	Query `json:"query"`
-}
-
-type Query struct {
-	Pages map[string]WikiResult `json:"pages"`
-}
-
-type WikiResult struct {
-	Title   string `json:"title"`
-	Extract string `json:"extract"`
-	PageId  int    `json:"pageid"`
-}
-
-func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
+func (p *Plugin) MessageWillBePosted(c *plugin.Context, post *model.Post) (*model.Post, string) {
 	if post.UserId == p.botId {
-		return
+		return nil, ""
+	}
+	if hnURLPattern == nil {
+		p.API.LogError("hnurlpattern was nil")
 	}
 
-	for _, link := range wikiURLPattern.FindAllString(post.Message, -1) {
-		titleAndAnchor := strings.Split(wikiPagePattern.FindStringSubmatch(link)[0], "#")
+	links := hnURLPattern.FindAllString(post.Message, -1)
+	if len(links) < 1 {
+		return nil, ""
+	}
 
-		var title string
-		//var anchor string
-		if len(titleAndAnchor) == 1 {
-			title = titleAndAnchor[0]
-			//anchor = ""
-		} else if len(titleAndAnchor) == 2 {
-			title = titleAndAnchor[0]
-			//anchor = titleAndAnchor[1]
-		} else {
-			p.API.LogWarn(fmt.Sprintf("Couldn't find title in Wikipedia link %s", link))
+	for _, link := range links {
+		split := strings.SplitAfter(link, `=`)
+		if len(split) < 2 {
 			continue
 		}
+		item := split[len(split)-1]
 
-		// this hack hacks off a bad prefix
-		// probably a better regexp or something is better
-		// hackity hack hack hack ⚔
-		if strings.HasPrefix(title, "wiki/") {
-			title = title[5:]
-		}
-
-		resp, err := http.Get(
-			fmt.Sprintf(
-				"https://en.wikipedia.org/w/api.php?action=query&titles="+
-					"%s"+
-					"&format=json"+
-					"&prop=extracts"+
-					"&exintro=true"+
-					"&explaintext=true"+
-					"&exsentences=1"+
-					"&exlimit=1", title))
+		resp, err := http.Get(fmt.Sprintf(
+			"https://hacker-news.firebaseio.com/v0/item/%s.json",
+			item))
 
 		if err != nil {
-			p.API.LogWarn(fmt.Sprintf("Something went wrong getting %s: %s", link, err.Error()))
-			continue
+			p.API.LogError(err.Error())
+			return nil, ""
 		}
 
-		if resp == nil {
-			p.API.LogError("response was empty")
-			continue
-		}
-
-		message, err := p.messageContentFromResponse(resp)
+		hnresponse, err := p.messageContentFromResponse(resp)
 		if err != nil {
 			p.API.LogError(err.Error())
 			continue
 		}
+		if hnresponse.Type != "story" {
+			continue
+		}
+		attachments := post.Attachments()
+		attachments = append(attachments,
+			&model.SlackAttachment{
+				AuthorIcon: fmt.Sprintf("/plugins/%s/hn.png", manifest.Id),
+				AuthorName: hnresponse.Title,
+				AuthorLink: hnresponse.URL,
+			})
+		post.DelProp("attachments")
+		post.AddProp("attachments", attachments)
+		return post, ""
 
-		p.API.CreatePost(&model.Post{
-			UserId:    p.botId,
-			Message:   message,
-			ParentId:  post.ParentId,
-			ChannelId: post.ChannelId,
-		})
+		// _, appErr := p.API.CreatePost(
+		// 	&model.Post{
+		// 		UserId:    p.botId,
+		// 		ChannelId: post.ChannelId,
+		// 		ParentId:  post.ParentId,
+		// 		Message:   fmt.Sprintf("[%s](%s)", hnresponse.Title, hnresponse.URL),
+		// 		Metadata: &model.PostMetadata{
+		// 			Embeds: []*model.PostEmbed{
+		// 				{
+		// 					Type: model.POST_EMBED_OPENGRAPH,
+		// 					URL:  hnresponse.URL,
+		// 					Data: map[string]string{
+		// 						"title": hnresponse.Title,
+		// 						"url":   hnresponse.URL,
+		// 					},
+		// 				},
+		// 			},
+		// 		},
+		// 	},
+		// )
 	}
+	return nil, ""
 }
 
-func (p *Plugin) messageContentFromResponse(resp *http.Response) (string, error) {
+type HNResponse struct {
+	Type  string `json:"type"`
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+func (p *Plugin) messageContentFromResponse(resp *http.Response) (*HNResponse, error) {
 	response, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	var w WikiResponse
+	if response == nil {
+		return nil, errors.New("response from upstream was nil")
+	}
+
+	var w HNResponse
 	if err := json.Unmarshal(response, &w); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	for _, page := range w.Pages {
-		return strings.SplitN(page.Extract, "\n", 2)[0], nil
-	}
-
-	return "", errors.New("shit")
+	return &w, nil
 }
 
 func (p *Plugin) OnActivate() (err error) {
 	p.botId, err = p.Helpers.EnsureBot(&model.Bot{
-		Username:    "wikipedia",
-		DisplayName: "Wikipedia",
-		Description: "The Wikipedia Bot",
+		Username:    "hackernewsbot",
+		DisplayName: "Hacker News Bot",
+		Description: "The Hacker News Bot",
 	})
 
 	if err != nil {
@@ -155,7 +145,7 @@ func (p *Plugin) OnActivate() (err error) {
 		return err
 	}
 
-	p.profileImage, err = ioutil.ReadFile(filepath.Join(bundlePath, "assets", "wiki.png"))
+	p.profileImage, err = ioutil.ReadFile(filepath.Join(bundlePath, "assets", "hn.png"))
 	if err != nil {
 		p.API.LogError(fmt.Sprintf(err.Error(), "couldn't read profile image: %s"))
 		return err
@@ -170,5 +160,13 @@ func (p *Plugin) OnActivate() (err error) {
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
+	if p == nil {
+		return
+	}
+	if p.profileImage == nil {
+		p.API.LogError("profile image was nil")
+		return
+	}
+
 	w.Write(p.profileImage)
 }
