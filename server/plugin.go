@@ -73,13 +73,15 @@ func (p *Plugin) MessageWillBePosted(c *plugin.Context, post *model.Post) (*mode
 		attachments := post.Attachments()
 		attachments = append(attachments,
 			&model.SlackAttachment{
-				AuthorIcon: fmt.Sprintf("/plugins/%s/hn.png", manifest.Id),
-				AuthorName: hnresponse.Title,
-				AuthorLink: hnresponse.URL,
+				Title: hnresponse.Title,
+				Text:  hnresponse.URL,
+				Color: "orange",
 			})
 		post.DelProp("attachments")
 		post.AddProp("attachments", attachments)
-		return post, ""
+	}
+
+	return post, ""
 }
 
 type HNResponse struct {
