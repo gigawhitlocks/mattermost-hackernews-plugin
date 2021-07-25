@@ -80,29 +80,6 @@ func (p *Plugin) MessageWillBePosted(c *plugin.Context, post *model.Post) (*mode
 		post.DelProp("attachments")
 		post.AddProp("attachments", attachments)
 		return post, ""
-
-		// _, appErr := p.API.CreatePost(
-		// 	&model.Post{
-		// 		UserId:    p.botId,
-		// 		ChannelId: post.ChannelId,
-		// 		ParentId:  post.ParentId,
-		// 		Message:   fmt.Sprintf("[%s](%s)", hnresponse.Title, hnresponse.URL),
-		// 		Metadata: &model.PostMetadata{
-		// 			Embeds: []*model.PostEmbed{
-		// 				{
-		// 					Type: model.POST_EMBED_OPENGRAPH,
-		// 					URL:  hnresponse.URL,
-		// 					Data: map[string]string{
-		// 						"title": hnresponse.Title,
-		// 						"url":   hnresponse.URL,
-		// 					},
-		// 				},
-		// 			},
-		// 		},
-		// 	},
-		// )
-	}
-	return nil, ""
 }
 
 type HNResponse struct {
