@@ -13,6 +13,8 @@ import (
 
 	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/plugin"
+
+	md "github.com/JohannesKaufmann/html-to-markdown"
 )
 
 // this regexp matches links to Hacker News pages with or without scheme
@@ -67,14 +69,27 @@ func (p *Plugin) MessageWillBePosted(c *plugin.Context, post *model.Post) (*mode
 			p.API.LogError(err.Error())
 			continue
 		}
-		if hnresponse.Type != "story" {
+		if hnresponse.Type != "story" &&
+			hnresponse.Type != "comment" {
 			continue
 		}
 		attachments := post.Attachments()
+		var text string
+		if hnresponse.URL != "" {
+			text = hnresponse.URL
+		} else {
+			converter := md.NewConverter("", true, nil)
+			text = hnresponse.Text
+			text, err = converter.ConvertString(text)
+			if err != nil {
+				p.API.LogError(err.Error())
+				continue
+			}
+		}
 		attachments = append(attachments,
 			&model.SlackAttachment{
 				Title: hnresponse.Title,
-				Text:  hnresponse.URL,
+				Text:  text,
 				Color: "orange",
 			})
 		post.DelProp("attachments")
@@ -88,6 +103,7 @@ type HNResponse struct {
 	Type  string `json:"type"`
 	Title string `json:"title"`
 	URL   string `json:"url"`
+	Text  string `json:"text"`
 }
 
 func (p *Plugin) messageContentFromResponse(resp *http.Response) (*HNResponse, error) {
